@@ -164,6 +164,10 @@ size_t getExprLen(byte *data) {
     else if(type == EXPR_IMPURE_FUN) {
         return sizeof(exprType) + sizeof(impureFunpt);
     }
+    else {
+        printf("This should never happen (all types should be covered by the ifs)\n");
+        exit(1);
+    }
 }
 
 void searchBinds(bindt bind, byte *odata, byte **data, replaceList *list) {
@@ -278,6 +282,10 @@ bool scanForSubst(byte *odata, byte **data, replaceList *list, size_t *rpos, siz
         *data += sizeof(exprType);
         *data += sizeof(impureFunpt);
         return false;
+    }
+    else {
+        printf("This should never happen (all types should be covered by the ifs)\n");
+        exit(1);
     }
 }
 
@@ -401,7 +409,7 @@ void evaluate(expr *e) {
         odata = e->data;
 
         size_t extra = 0;
-        for(int i = 0; i < list.len; i++) {
+        for(size_t i = 0; i < list.len; i++) {
             size_t offset = list.offsets[i] - flen + extra;
             size_t toMove = oldLen - offset + extra - flen - rlen - sizeof(bindt);
             extra += extraBytesPerBind;
@@ -510,7 +518,7 @@ expr mkImpureFun(impureFunpt fun) {
 // ==================
 
 char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[]) {
-    for(int i = 0; i < *lastBind; i++) {
+    for(size_t i = 0; i < *lastBind; i++) {
         if(binds[i] == bind) return symbols[i];
     }
 
@@ -648,7 +656,7 @@ void printExpr(expr e) {
     expr __##fname(byte *__##argname, size_t len) { \
         exprType type = *(exprType *)__##argname; \
         if(type != EXPR_IMPURE_VAL) { \
-            printf("Impure function expected type %d, found type %d\n", EXPR_IMPURE_VAL, type); \
+            printf("Impure function expected type %d found type %lu\n", EXPR_IMPURE_VAL, type); \
             exit(1); \
         } \
         __##argname += sizeof(exprType); \
@@ -656,7 +664,7 @@ void printExpr(expr e) {
         len -= sizeof(exprType); \
         len -= sizeof(size_t); \
         if(len != sizeof(argty)) { \
-            printf("Impure function expected input length %d, found length %d\n", sizeof(argty), len); \
+            printf("Impure function expected input length %lu, found length %lu\n", sizeof(argty), len); \
             exit(1); \
         } \
         argty argname = *(argty *)__##argname; \

@@ -1,1 +1,1 @@
-gcc ./main.c -o ./bin/lambda -ggdb && ./bin/lambda
+gcc ./main.c -o ./bin/lambda -ggdb -Wall -Wextra && ./bin/lambda
