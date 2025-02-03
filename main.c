@@ -13,6 +13,11 @@
 // Z combinator definition:
 // https://en.wikipedia.org/wiki/Fixed-point_combinator
 
+// NOTE: I'm currently too sleepy to figure this out, but there's a huge
+// memory leak happening in tests (probably due to how EXPR_IMPURE_VAL
+// are being cloned). If you comment out the tests, memory usage is 
+// basically perfect
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -50,7 +55,12 @@ void Free(void *ptr) {
 #else
 #define Malloc(s) calloc(1, s)
 #define Free(p) free(p)
+#define Realloc(p, s) realloc(p, s)
 #endif
+
+// ==================
+// TYPES
+// ==================
 
 typedef uint8_t byte;
 
@@ -71,7 +81,14 @@ typedef struct {
 } expr;
 
 typedef expr (*impureFunpt)(byte *data, size_t len);
-typedef expr impureFunt(byte *data, size_t len);
+
+// ==================
+// UTILITY
+// ==================
+
+void maybeFree(expr e) {
+    if(e.aux) Free(e.data);
+}
 
 bool isBind(exprType t) { return t >= 4; }
 
@@ -113,6 +130,10 @@ void rlfree(replaceList list) {
 
 #define rlinit (sizeof(size_t) * 128)
 #define mkrl() ((replaceList){ .offsets = Malloc(rlinit), .len = 0, .cap = rlinit })
+
+// ==================
+// EVALUATION
+// ==================
 
 size_t getExprLen(byte *data) {
     exprType type = *(exprType *)data;
@@ -341,8 +362,6 @@ void makeUniqueBindings(byte **data) {
     }
 }
 
-void printExpr(expr e);
-bool displayEvalSteps = false;
 void evaluate(expr *e) {
     replaceList list = mkrl();
 
@@ -358,10 +377,6 @@ void evaluate(expr *e) {
     impureFunpt imfun = NULL;
 
     while(scanForSubst(odata, &data, &list, &rpos, &rlen, &fpos, &flen, &imfun)) {
-        if(displayEvalSteps) {
-            printExpr(*e);
-        }
-
         bool useImpureFunction = imfun != NULL;
         size_t imrlen = rlen;
 
@@ -411,9 +426,9 @@ void evaluate(expr *e) {
     rlfree(list);
 }
 
-void maybeFree(expr e) {
-    if(e.aux) Free(e.data);
-}
+// ==================
+// CONSTRUCTORS
+// ==================
 
 expr mkBind(bindt bind) {
     size_t len = sizeof(bindt);
@@ -489,6 +504,10 @@ expr mkImpureFun(impureFunpt fun) {
 
     return b;
 }
+        
+// ==================
+// PRINTING
+// ==================
 
 char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[]) {
     for(int i = 0; i < *lastBind; i++) {
@@ -647,9 +666,9 @@ void printExpr(expr e) {
         argty *__result = Malloc(sizeof(argty)); \
         *__result = argname; \
         return mkImpureVal((byte *)__result, sizeof(argty)); \
-    } 
-    // const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
-    // expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
+    } \
+    const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
+    expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
 
 #define DefvarImpure(vname, vty, vval) \
     vty *__##vname = Malloc(sizeof(vty)); \
@@ -673,8 +692,6 @@ DefunImpure(ImpureIncrement, uint64_t, num, {
 });
 
 int main() {
-    expr ImpureIncrement = mkImpureFun(__ImpureIncrement);
-
     // Zero and Successor
     Defun(Zero, s, Fun(z, Bind(z)));
     Defun(Succ, w, Fun(y, Fun(x, App(Bind(y), App(App(Bind(w), Bind(y)), Bind(x))))));
