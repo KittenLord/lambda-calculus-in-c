@@ -2,9 +2,9 @@
 // Scroll to the very bottom to see the demo :)
 // =================================================
 
-// If you want to see the memory usage of this demo (where numbers
-// represent the amount of malloc calls), uncomment the following line:
-#define MEM_STATS
+// If you want to see the memory usage of this demo (numbers represent
+// the amount of malloc/free calls), uncomment the following line:
+// #define MEM_STATS
 
 // Main source:
 // https://personal.utdallas.edu/~gupta/courses/apl/lambda.pdf
@@ -28,9 +28,6 @@ int64_t mallocCount;
 int64_t freeCount;
 
 void *Malloc(size_t size) {
-
-    // printf("MALLOC: %d\n", size);
-
     mallocCount++;
     finalCount++;
     if(finalCount > peakCount) peakCount = finalCount;
@@ -39,12 +36,12 @@ void *Malloc(size_t size) {
 }
 
 void *Realloc(void *ptr, size_t size) {
-    // printf("REALLOC: %d\n", size);
     return realloc(ptr, size);
 }
 
 void Free(void *ptr) {
     if(ptr == 0) return;
+
     freeCount++;
     finalCount--;
 
@@ -53,7 +50,6 @@ void Free(void *ptr) {
 #else
 #define Malloc(s) calloc(1, s)
 #define Free(p) free(p)
-#define Realloc(p, s) realloc(p, s)
 #endif
 
 typedef uint8_t byte;
@@ -96,8 +92,9 @@ void rladd(replaceList *list, size_t offset) {
         return;
     }
 
-    size_t *noffsets = Malloc(list->cap * 2 + 1);
-    memcpy(noffsets, list->offsets, list->len);
+    size_t *noffsets = Malloc((list->cap * 2 + 1) * sizeof(size_t));
+    memcpy(noffsets, list->offsets, list->len * sizeof(size_t));
+    Free(list->offsets);
     list->offsets = noffsets;
     list->cap = list->cap * 2 + 1;
 
@@ -111,14 +108,14 @@ replaceList rlcopy(replaceList list) {
 }
 
 void rlfree(replaceList list) {
-    free(list.offsets);
+    Free(list.offsets);
 }
 
-#define rlinit 128
+#define rlinit (sizeof(size_t) * 128)
 #define mkrl() ((replaceList){ .offsets = Malloc(rlinit), .len = 0, .cap = rlinit })
 
 size_t getExprLen(byte *data) {
-    exprType type = *(exprType *)(data);
+    exprType type = *(exprType *)data;
 
     if(false) {}
     else if(isBind(type)) {
@@ -143,7 +140,7 @@ size_t getExprLen(byte *data) {
         size_t vlen = *(size_t *)data;
         return ival + sizeof(size_t) + vlen;
     }
-    else if(type == EXPR_IMPURE_VAL) {
+    else if(type == EXPR_IMPURE_FUN) {
         return sizeof(exprType) + sizeof(impureFunpt);
     }
 }
@@ -176,7 +173,7 @@ void searchBinds(bindt bind, byte *odata, byte **data, replaceList *list) {
     }
     else if(type == EXPR_IMPURE_VAL) {
         *data += sizeof(exprType);
-        size_t vlen = *(size_t *)data;
+        size_t vlen = *(size_t *)*data;
         *data += sizeof(size_t);
         *data += vlen;
         return;
@@ -224,15 +221,22 @@ bool scanForSubst(byte *odata, byte **data, replaceList *list, size_t *rpos, siz
 
             return true;
         }
-        else if(type == EXPR_IMPURE_FUN) {
+        else if(lhsType == EXPR_IMPURE_FUN) {
             *data += sizeof(exprType);
             *imfun = *(impureFunpt *)*data;
-            rladd(list, *data - odata);
+            rladd(list, *data - odata); // NOTE: assumes sizeof(bindt) == sizeof(pointer)
             *data += sizeof(impureFunpt);
             *flen = sizeof(exprType) + sizeof(exprType); // + sizeof(impureFunpt);
 
             *rpos = *data - odata;
             *rlen = getExprLen(*data);
+
+            exprType argType = *(exprType *)*data;
+            if(argType != EXPR_IMPURE_VAL) {
+                *imfun = NULL;
+                list->len = 0;
+                return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
+            }
 
             return true;
         }
@@ -337,6 +341,8 @@ void makeUniqueBindings(byte **data) {
     }
 }
 
+void printExpr(expr e);
+bool displayEvalSteps = false;
 void evaluate(expr *e) {
     replaceList list = mkrl();
 
@@ -352,25 +358,30 @@ void evaluate(expr *e) {
     impureFunpt imfun = NULL;
 
     while(scanForSubst(odata, &data, &list, &rpos, &rlen, &fpos, &flen, &imfun)) {
+        if(displayEvalSteps) {
+            printExpr(*e);
+        }
+
         bool useImpureFunction = imfun != NULL;
+        size_t imrlen = rlen;
 
         byte *rdata = Malloc(rlen);
         memcpy(rdata, e->data + rpos, rlen);
 
         if(useImpureFunction) {
             expr impureResult = imfun(rdata, rlen);
-            free(rdata);
+            Free(rdata);
             rdata = impureResult.data;
-            rlen = impureResult.len;
+            imrlen = impureResult.len;
         }
 
-        size_t extraBytesPerBind = (rlen - sizeof(bindt));
+        size_t extraBytesPerBind = (imrlen - sizeof(bindt));
         size_t oldLen = e->len;
         size_t newLen = e->len + extraBytesPerBind * list.len - rlen - flen;
 
         memmove(e->data + rpos, e->data + rpos + rlen, e->len - (rpos + rlen)); 
         memmove(e->data + fpos, e->data + fpos + flen, e->len - (fpos + flen)); 
-        e->data = realloc(e->data, newLen);
+        e->data = Realloc(e->data, newLen);
         e->len = newLen;
         odata = e->data;
 
@@ -387,10 +398,10 @@ void evaluate(expr *e) {
                 makeUniqueBindings(&_rdata);
             }
 
-            memcpy(odata + offset, rdata, rlen);
+            memcpy(odata + offset, rdata, imrlen);
         }
 
-        free(rdata);
+        Free(rdata);
         list.len = 0;
         odata = e->data;
         data = e->data;
@@ -453,12 +464,15 @@ expr mkApp(expr lhs, expr rhs) {
 }
 
 expr mkImpureVal(byte *value, size_t vlen) {
-    size_t len = sizeof(exprType) + vlen;
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    size_t len = sizeof(exprType) + sizeof(size_t) + vlen;
+    expr b = { .aux = false, .data = Malloc(len), .len = len };
     byte *data = b.data;
 
     *(exprType *)data = EXPR_IMPURE_VAL;
     data += sizeof(exprType);
+
+    *(size_t *)data = vlen;
+    data += sizeof(size_t);
 
     memcpy(data, value, vlen);
     return b;
@@ -466,7 +480,7 @@ expr mkImpureVal(byte *value, size_t vlen) {
 
 expr mkImpureFun(impureFunpt fun) {
     size_t len = sizeof(exprType) + sizeof(impureFunpt);
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    expr b = { .aux = false, .data = Malloc(len), .len = len };
     byte *data = b.data;
 
     *(exprType *)data = EXPR_IMPURE_FUN;
@@ -614,10 +628,18 @@ void printExpr(expr e) {
 #define DefunImpure(fname, argty, argname, body) \
     expr __##fname(byte *__##argname, size_t len) { \
         exprType type = *(exprType *)__##argname; \
-        assert(type == EXPR_IMPURE_VAL); \
+        if(type != EXPR_IMPURE_VAL) { \
+            printf("Impure function expected type %d, found type %d\n", EXPR_IMPURE_VAL, type); \
+            exit(1); \
+        } \
         __##argname += sizeof(exprType); \
+        __##argname += sizeof(size_t); \
         len -= sizeof(exprType); \
-        assert(len == sizeof(argty)); \
+        len -= sizeof(size_t); \
+        if(len != sizeof(argty)) { \
+            printf("Impure function expected input length %d, found length %d\n", sizeof(argty), len); \
+            exit(1); \
+        } \
         argty argname = *(argty *)__##argname; \
  \
         body; \
@@ -625,16 +647,16 @@ void printExpr(expr e) {
         argty *__result = Malloc(sizeof(argty)); \
         *__result = argname; \
         return mkImpureVal((byte *)__result, sizeof(argty)); \
-    } \
-    const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
-    expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
+    } 
+    // const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
+    // expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
 
 #define DefvarImpure(vname, vty, vval) \
     vty *__##vname = Malloc(sizeof(vty)); \
     *__##vname = vval; \
     expr vname = mkImpureVal((byte *)__##vname, sizeof(vty));
 
-#define ReadVarImpure(var, ty) *(ty *)(var.data + sizeof(exprType))
+#define ReadVarImpure(var, ty) *(ty *)(var.data + sizeof(exprType) + sizeof(size_t))
         
 // ==================
 // USAGE
@@ -643,7 +665,7 @@ void printExpr(expr e) {
 expr __ImpureIdentity(byte *ptr, size_t len) {
     byte *nptr = Malloc(len);
     memcpy(nptr, ptr, len);
-    return mkImpureVal((byte *)nptr, len);
+    return (expr){ .aux = false, .data = nptr, .len = len };
 }
 
 DefunImpure(ImpureIncrement, uint64_t, num, {
@@ -651,6 +673,8 @@ DefunImpure(ImpureIncrement, uint64_t, num, {
 });
 
 int main() {
+    expr ImpureIncrement = mkImpureFun(__ImpureIncrement);
+
     // Zero and Successor
     Defun(Zero, s, Fun(z, Bind(z)));
     Defun(Succ, w, Fun(y, Fun(x, App(Bind(y), App(App(Bind(w), Bind(y)), Bind(x))))));
@@ -670,8 +694,6 @@ int main() {
     Defvar(Six, App(App(Sum, Three), Three));
     Defvar(Twelve, App(App(Mul, Three), Four));
     Defvar(Twenty, App(App(Mul, Five), Four));
-
-
 
     // Booleans
     Defun(True, x, Fun(y, Bind(x)));
@@ -725,9 +747,6 @@ int main() {
     DefunLazy(Fact, n, App(App(YC, FactAux), Bind(n)));
     Defvar(FactFive, App(Fact, Five));
 
-    Defvar(FiftyFive, App(App(Mul, Five), Eleven));
-    printExpr(FiftyFive);
-
     // Defining impure values for confirming results
     DefvarImpure(ImpureZero, uint64_t, 0);
     DefvarImpure(ImpureOne, uint64_t, 1);
@@ -740,7 +759,7 @@ int main() {
 
     Defvar(CheckTwenty, App(CheckNumber, Twenty));
     printf("Twenty evaluates to: %lu\n", ReadVarImpure(CheckTwenty, uint64_t));
-    
+
     Defvar(CheckFour, App(CheckNumber, Four));
     printf("Four evaluates to: %lu\n", ReadVarImpure(CheckFour, uint64_t));
 
@@ -771,15 +790,11 @@ int main() {
     Defvar(CheckFiveLEFive, App(CheckBool, FiveLEFive));
     printf("5 <= 5 evaluates to: %s\n", boolToStr(ReadVarImpure(CheckFiveLEFive, bool)));
 
-#if defined(SLOW) && defined(SLOW_SUMNAT)
     Defvar(CheckSumTwelve, App(CheckNumber, SumTwelve));
     printf("Sum of all numbers up to twelve evaluates to: %lu\n", ReadVarImpure(CheckSumTwelve, uint64_t));
-#endif
 
-#if defined(SLOW) && defined(SLOW_FACTORIAL)
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
-#endif
 
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
