@@ -4,7 +4,7 @@
 
 // If you want to see the memory usage of this demo (where numbers
 // represent the amount of malloc calls), uncomment the following line:
-// #define MEM_STATS
+#define MEM_STATS
 
 // Main source:
 // https://personal.utdallas.edu/~gupta/courses/apl/lambda.pdf
@@ -28,11 +28,19 @@ int64_t mallocCount;
 int64_t freeCount;
 
 void *Malloc(size_t size) {
+
+    // printf("MALLOC: %d\n", size);
+
     mallocCount++;
     finalCount++;
     if(finalCount > peakCount) peakCount = finalCount;
 
     return calloc(1, size);
+}
+
+void *Realloc(void *ptr, size_t size) {
+    // printf("REALLOC: %d\n", size);
+    return realloc(ptr, size);
 }
 
 void Free(void *ptr) {
@@ -45,6 +53,7 @@ void Free(void *ptr) {
 #else
 #define Malloc(s) calloc(1, s)
 #define Free(p) free(p)
+#define Realloc(p, s) realloc(p, s)
 #endif
 
 typedef uint8_t byte;
@@ -70,6 +79,10 @@ typedef expr impureFunt(byte *data, size_t len);
 
 bool isBind(exprType t) { return t >= 4; }
 
+char *boolToStr(bool b) {
+    if(b) return "true";
+    else  return "false";
+}
 
 typedef struct {
     size_t *offsets;
@@ -175,7 +188,7 @@ void searchBinds(bindt bind, byte *odata, byte **data, replaceList *list) {
     }
 }
 
-bool scanForSubst(byte *odata, byte **data, replaceList *list, byte **rdata, size_t *rlen) {
+bool scanForSubst(byte *odata, byte **data, replaceList *list, size_t *rpos, size_t *rlen, size_t *fpos, size_t *flen, impureFunpt *imfun) {
     exprType type = *(exprType *)*data;
 
     if(false) {}
@@ -186,14 +199,19 @@ bool scanForSubst(byte *odata, byte **data, replaceList *list, byte **rdata, siz
     else if(type == EXPR_FUN) {
         *data += sizeof(exprType);
         *data += sizeof(bindt);
-        return scanForSubst(odata, data, list, rdata, rlen);
+        return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
     }
     else if(type == EXPR_APP) {
+        *fpos = *data - odata;
         *data += sizeof(exprType);
         exprType lhsType = *(exprType *)*data;
         if(lhsType == EXPR_FUN) {
+
             size_t funLen = getExprLen(*data);
             size_t argLen = getExprLen(*data + funLen);
+            *data += sizeof(exprType);
+
+            *flen = sizeof(exprType) + sizeof(exprType) + sizeof(bindt);
 
             bindt bind = *(bindt *)*data;
             *data += sizeof(bindt);
@@ -201,15 +219,27 @@ bool scanForSubst(byte *odata, byte **data, replaceList *list, byte **rdata, siz
             byte *sdata = *data;
             searchBinds(bind, odata, &sdata, list);
 
-            *rdata = *data + funLen;
+            *rpos = *fpos + sizeof(exprType) + funLen;
             *rlen = argLen;
 
             return true;
         }
+        else if(type == EXPR_IMPURE_FUN) {
+            *data += sizeof(exprType);
+            *imfun = *(impureFunpt *)*data;
+            rladd(list, *data - odata);
+            *data += sizeof(impureFunpt);
+            *flen = sizeof(exprType) + sizeof(exprType); // + sizeof(impureFunpt);
+
+            *rpos = *data - odata;
+            *rlen = getExprLen(*data);
+
+            return true;
+        }
         else {
-            bool lhs = scanForSubst(odata, data, list, rdata, rlen);
+            bool lhs = scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
             if(lhs) return lhs;
-            return scanForSubst(odata, data, list, rdata, rlen);
+            return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
         }
     }
     else if(type == EXPR_IMPURE_VAL) {
@@ -278,11 +308,12 @@ void makeUniqueBindings(byte **data) {
         *data += sizeof(exprType);
         bindt bind = *(bindt *)*data;
         var(newBind);
+        *(bindt *)*data = newBind;
+        *data += sizeof(bindt);
 
         byte *sdata = *data;
         replaceBindings(bind, newBind, &sdata);
 
-        *data += sizeof(bindt);
         makeUniqueBindings(data);
         return;
     }
@@ -307,45 +338,63 @@ void makeUniqueBindings(byte **data) {
 }
 
 void evaluate(expr *e) {
-    printf("evaluate\n");
     replaceList list = mkrl();
 
     byte *odata = e->data;
     byte *data = e->data;
 
-    byte *rdata;
+    size_t rpos;
     size_t rlen;
 
-    while(scanForSubst(odata, &data, &list, &rdata, &rlen)) {
+    size_t fpos;
+    size_t flen;
+
+    impureFunpt imfun = NULL;
+
+    while(scanForSubst(odata, &data, &list, &rpos, &rlen, &fpos, &flen, &imfun)) {
+        bool useImpureFunction = imfun != NULL;
+
+        byte *rdata = Malloc(rlen);
+        memcpy(rdata, e->data + rpos, rlen);
+
+        if(useImpureFunction) {
+            expr impureResult = imfun(rdata, rlen);
+            free(rdata);
+            rdata = impureResult.data;
+            rlen = impureResult.len;
+        }
+
         size_t extraBytesPerBind = (rlen - sizeof(bindt));
         size_t oldLen = e->len;
-        size_t newLen = e->len + extraBytesPerBind * list.len;
+        size_t newLen = e->len + extraBytesPerBind * list.len - rlen - flen;
 
-        // copying before realloc
-        byte *_rdata = Malloc(rlen);
-        memcpy(_rdata, rdata, rlen);
-        rdata = _rdata;
-
+        memmove(e->data + rpos, e->data + rpos + rlen, e->len - (rpos + rlen)); 
+        memmove(e->data + fpos, e->data + fpos + flen, e->len - (fpos + flen)); 
         e->data = realloc(e->data, newLen);
+        e->len = newLen;
         odata = e->data;
 
         size_t extra = 0;
         for(int i = 0; i < list.len; i++) {
-            size_t offset = list.offsets[i];
-            size_t toMove = oldLen - offset;
-            offset += extra;
+            size_t offset = list.offsets[i] - flen + extra;
+            size_t toMove = oldLen - offset + extra - flen - rlen - sizeof(bindt);
             extra += extraBytesPerBind;
 
-            memmove(odata + offset + sizeof(bindt), odata + offset + sizeof(bindt) + extraBytesPerBind, toMove);
+            memmove(odata + offset + sizeof(bindt) + extraBytesPerBind, odata + offset + sizeof(bindt), toMove);
 
-            _rdata = rdata;
-            makeUniqueBindings(&_rdata);
+            if(!useImpureFunction) {
+                byte *_rdata = rdata;
+                makeUniqueBindings(&_rdata);
+            }
+
             memcpy(odata + offset, rdata, rlen);
         }
 
         free(rdata);
         list.len = 0;
-        data = odata;
+        odata = e->data;
+        data = e->data;
+        imfun = NULL;
     }
 
     rlfree(list);
@@ -363,14 +412,19 @@ expr mkBind(bindt bind) {
 }
 
 expr mkFun(bindt bind, expr body) {
-    size_t len = sizeof(exprType) + body.len;
+    size_t len = sizeof(exprType) + sizeof(bindt) + body.len;
     expr b = { .aux = true, .data = Malloc(len), .len = len };
     byte *data = b.data;
 
     *(exprType *)data = EXPR_FUN;
     data += sizeof(exprType);
 
+    *(bindt *)data = bind;
+    data += sizeof(bindt);
+
     memcpy(data, body.data, body.len);
+    byte *p = data;
+    makeUniqueBindings(&p);
 
     maybeFree(body);
     return b;
@@ -385,15 +439,20 @@ expr mkApp(expr lhs, expr rhs) {
     data += sizeof(exprType);
 
     memcpy(data, lhs.data, lhs.len);
+    byte *p = data;
+    makeUniqueBindings(&p);
     data += lhs.len;
+
     memcpy(data, rhs.data, rhs.len);
+    p = data;
+    makeUniqueBindings(&p);
     
     maybeFree(lhs);
     maybeFree(rhs);
     return b;
 }
 
-expr mkImpureVal(size_t vlen, byte *value) {
+expr mkImpureVal(byte *value, size_t vlen) {
     size_t len = sizeof(exprType) + vlen;
     expr b = { .aux = true, .data = Malloc(len), .len = len };
     byte *data = b.data;
@@ -415,6 +474,61 @@ expr mkImpureFun(impureFunpt fun) {
     *(impureFunpt *)data = fun;
 
     return b;
+}
+
+char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[]) {
+    for(int i = 0; i < *lastBind; i++) {
+        if(binds[i] == bind) return symbols[i];
+    }
+
+    binds[*lastBind] = bind;
+    return symbols[(*lastBind)++];
+}
+
+void _printExpr(byte **data, bindt binds[], size_t *lastBind, char symbols[], bool isRhs) {
+    exprType type = *(exprType *)*data;
+
+    if(false) {}
+    else if(isBind(type)) {
+        *data += sizeof(bindt);
+        printf("%c", getBindSymbol((bindt)type, binds, lastBind, symbols));
+    }
+    else if(type == EXPR_FUN) {
+        *data += sizeof(exprType);
+        bindt bind = *(bindt *)*data;
+        printf("( λ%c.", getBindSymbol(bind, binds, lastBind, symbols));
+        *data += sizeof(bindt);
+        _printExpr(data, binds, lastBind, symbols, false);
+        printf(" )");
+    }
+    else if(type == EXPR_APP) {
+        if(isRhs) printf("(");
+        *data += sizeof(exprType);
+        _printExpr(data, binds, lastBind, symbols, false);
+        _printExpr(data, binds, lastBind, symbols, true);
+        if(isRhs) printf(")");
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        *data += sizeof(exprType);
+        size_t vlen = *(size_t *)*data;
+        printf("[%lu bytes]", vlen);
+        *data += sizeof(size_t);
+        *data += vlen;
+    }
+    else if(type == EXPR_IMPURE_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(impureFunpt);
+        printf("<fun>");
+    }
+}
+
+void printExpr(expr e) {
+    bindt binds[52] = {0};
+    size_t lastBind = 0;
+    char symbols[52] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    byte *data = e.data;
+    _printExpr(&data, binds, &lastBind, symbols, false);
+    printf("\n");
 }
 
 // ==================
@@ -489,47 +603,54 @@ expr mkImpureFun(impureFunpt fun) {
     vname.aux = false; \
     evaluate(&vname);
 
-/*
+#define DefvarLazy(vname, body) \
+    expr vname; \
+    { \
+        expr temp = body; \
+        vname = temp; \
+    } \
+    vname.aux = false;
+
 #define DefunImpure(fname, argty, argname, body) \
     expr __##fname(byte *__##argname, size_t len) { \
-        if(!(len == sizeof(argty))) { \
-            printf("Unexpected arg length in impure function. Expected: %lu, Actual: %lu, line: %d\n", sizeof(argty), len, __LINE__); \
-            exit(1); \
-        } \
+        exprType type = *(exprType *)__##argname; \
+        assert(type == EXPR_IMPURE_VAL); \
+        __##argname += sizeof(exprType); \
+        len -= sizeof(exprType); \
+        assert(len == sizeof(argty)); \
         argty argname = *(argty *)__##argname; \
+ \
         body; \
-        __##argname = Malloc(sizeof(argty)); \
-        *__##argname = argname; \
-        return (expr){ .type = EXPR_IMPURE_VAL, .valp = __##argname, .vall = sizeof(argty) }; \
+ \
+        argty *__result = Malloc(sizeof(argty)); \
+        *__result = argname; \
+        return mkImpureVal((byte *)__result, sizeof(argty)); \
     } \
-    expr fname = (expr){ .type = EXPR_IMPURE_FUN, .fun = __##fname }; \
+    const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
+    expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
 
 #define DefvarImpure(vname, vty, vval) \
     vty *__##vname = Malloc(sizeof(vty)); \
     *__##vname = vval; \
-    expr vname = (expr){ .type = EXPR_IMPURE_VAL, .valp = (byte *)__##vname, .vall = sizeof(vty) }; \
+    expr vname = mkImpureVal((byte *)__##vname, sizeof(vty));
 
-#define ReadVarImpure(var, ty) *(ty *)var.valp
-*/
+#define ReadVarImpure(var, ty) *(ty *)(var.data + sizeof(exprType))
         
 // ==================
 // USAGE
 // ==================
 
-/*
 expr __ImpureIdentity(byte *ptr, size_t len) {
-    byte *ret = Malloc(len);
-    memcpy(ret, ptr, len);
-    return (expr){ .type = EXPR_IMPURE_VAL, .valp = ret, .vall = len };
+    byte *nptr = Malloc(len);
+    memcpy(nptr, ptr, len);
+    return mkImpureVal((byte *)nptr, len);
 }
 
 DefunImpure(ImpureIncrement, uint64_t, num, {
     num++;
 });
-*/
 
 int main() {
-
     // Zero and Successor
     Defun(Zero, s, Fun(z, Bind(z)));
     Defun(Succ, w, Fun(y, Fun(x, App(Bind(y), App(App(Bind(w), Bind(y)), Bind(x))))));
@@ -545,10 +666,12 @@ int main() {
     Defun(Mul, x, Fun(y, Fun(z, App(Bind(x), App(Bind(y), Bind(z))))));
 
     // More complicated numbers
-    Defvar(Five, App(App(Sum, Two), Three));
+    Defvar(Five, App(App(Two, Succ), Three));
     Defvar(Six, App(App(Sum, Three), Three));
     Defvar(Twelve, App(App(Mul, Three), Four));
     Defvar(Twenty, App(App(Mul, Five), Four));
+
+
 
     // Booleans
     Defun(True, x, Fun(y, Bind(x)));
@@ -595,18 +718,16 @@ int main() {
     // Sum via Y combinator
     Defun(SumNatAux, r, Fun(n, App(App(App(IsZero, Bind(n)), Zero), App(App(Bind(n), Succ), App(Bind(r), App(Pred, Bind(n)))))));
     DefunLazy(SumNat, n, App(App(YC, SumNatAux), Bind(n)));
-#if defined(SLOW) && defined(SLOW_SUMNAT)
     Defvar(SumTwelve, App(SumNat, Twelve));
-#endif
 
     // Factorial via Y combinator
     Defun(FactAux, f, Fun(n, App(App(App(IsZero, Bind(n)), One), App(App(Mul, Bind(n)), App(Bind(f), App(Pred, Bind(n)))))));
     DefunLazy(Fact, n, App(App(YC, FactAux), Bind(n)));
-#if defined(SLOW) && defined(SLOW_FACTORIAL)
     Defvar(FactFive, App(Fact, Five));
-#endif
 
-/*
+    Defvar(FiftyFive, App(App(Mul, Five), Eleven));
+    printExpr(FiftyFive);
+
     // Defining impure values for confirming results
     DefvarImpure(ImpureZero, uint64_t, 0);
     DefvarImpure(ImpureOne, uint64_t, 1);
@@ -663,8 +784,6 @@ int main() {
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
 #endif
-
-*/
 
     return 0;
 }
