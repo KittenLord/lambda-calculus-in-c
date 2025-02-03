@@ -57,7 +57,7 @@ typedef bindt exprType;
 #define EXPR_IMPURE_VAL 2
 #define EXPR_IMPURE_FUN 3
 bindt lastBind = 4;
-#define var(b) bindt b = lastBind++;
+#define var(b) if(lastBind < 4) { lastBind = 4; } bindt b = lastBind++;
 
 typedef struct {
     byte *data;
@@ -65,75 +65,11 @@ typedef struct {
     bool aux;
 } expr;
 
+typedef expr (*impureFunpt)(byte *data, size_t len);
+typedef expr impureFunt(byte *data, size_t len);
+
 bool isBind(exprType t) { return t >= 4; }
 
-void maybeFree(expr e) {
-    if(e.aux) Free(e.data);
-}
-
-expr mkBind(bindt bind) {
-    size_t len = sizeof(bindt);
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
-    *(bindt *)b.data = bind;
-    return b;
-}
-
-expr mkFun(bindt bind, expr body) {
-    size_t len = sizeof(exprType) + body.len;
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
-    byte *data = b.data;
-
-    *(exprType *)data = EXPR_FUN;
-    data += sizeof(exprType);
-
-    memcpy(data, body.data, body.len);
-
-    maybeFree(body);
-    return b;
-}
-
-expr mkApp(expr lhs, expr rhs) {
-    size_t len = sizeof(exprType) + lhs.len + rhs.len;
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
-    byte *data = b.data;
-
-    *(exprType *)data = EXPR_APP;
-    data += sizeof(exprType);
-
-    memcpy(data, lhs.data, lhs.len);
-    data += lhs.len;
-    memcpy(data, rhs.data, rhs.len);
-    
-    maybeFree(lhs);
-    maybeFree(rhs);
-    return b;
-}
-
-expr mkImpureVal(size_t vlen, byte *value) {
-    size_t len = sizeof(exprType) + vlen;
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
-    byte *data = b.data;
-
-    *(exprType *)data = EXPR_IMPURE_VAL;
-    data += sizeof(exprType);
-
-    memcpy(data, value, vlen);
-    return b;
-}
-
-typedef expr (*impureFunpt)(byte *val, size_t len);
-typedef expr impureFunt(byte *val, size_t len);
-expr mkImpureFun(impureFunpt fun) {
-    size_t len = sizeof(exprType) + sizeof(impureFunpt);
-    expr b = { .aux = true, .data = Malloc(len), .len = len };
-    byte *data = b.data;
-
-    *(exprType *)data = EXPR_IMPURE_FUN;
-    data += sizeof(exprType);
-    *(impureFunpt *)data = fun;
-
-    return b;
-}
 
 typedef struct {
     size_t *offsets;
@@ -169,7 +105,7 @@ void rlfree(replaceList list) {
 #define mkrl() ((replaceList){ .offsets = Malloc(rlinit), .len = 0, .cap = rlinit })
 
 size_t getExprLen(byte *data) {
-    exprType type = *(exprType *)(*data);
+    exprType type = *(exprType *)(data);
 
     if(false) {}
     else if(isBind(type)) {
@@ -371,6 +307,7 @@ void makeUniqueBindings(byte **data) {
 }
 
 void evaluate(expr *e) {
+    printf("evaluate\n");
     replaceList list = mkrl();
 
     byte *odata = e->data;
@@ -414,72 +351,134 @@ void evaluate(expr *e) {
     rlfree(list);
 }
 
-/*
+void maybeFree(expr e) {
+    if(e.aux) Free(e.data);
+}
+
+expr mkBind(bindt bind) {
+    size_t len = sizeof(bindt);
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    *(bindt *)b.data = bind;
+    return b;
+}
+
+expr mkFun(bindt bind, expr body) {
+    size_t len = sizeof(exprType) + body.len;
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    byte *data = b.data;
+
+    *(exprType *)data = EXPR_FUN;
+    data += sizeof(exprType);
+
+    memcpy(data, body.data, body.len);
+
+    maybeFree(body);
+    return b;
+}
+
+expr mkApp(expr lhs, expr rhs) {
+    size_t len = sizeof(exprType) + lhs.len + rhs.len;
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    byte *data = b.data;
+
+    *(exprType *)data = EXPR_APP;
+    data += sizeof(exprType);
+
+    memcpy(data, lhs.data, lhs.len);
+    data += lhs.len;
+    memcpy(data, rhs.data, rhs.len);
+    
+    maybeFree(lhs);
+    maybeFree(rhs);
+    return b;
+}
+
+expr mkImpureVal(size_t vlen, byte *value) {
+    size_t len = sizeof(exprType) + vlen;
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    byte *data = b.data;
+
+    *(exprType *)data = EXPR_IMPURE_VAL;
+    data += sizeof(exprType);
+
+    memcpy(data, value, vlen);
+    return b;
+}
+
+expr mkImpureFun(impureFunpt fun) {
+    size_t len = sizeof(exprType) + sizeof(impureFunpt);
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    byte *data = b.data;
+
+    *(exprType *)data = EXPR_IMPURE_FUN;
+    data += sizeof(exprType);
+    *(impureFunpt *)data = fun;
+
+    return b;
+}
 
 // ==================
 // MACROS
 // ==================
 
-#define Bind(bi) (expr){ .type = EXPR_BIND, .bind = (bi) };
+#define Bind(bi) mkBind(bi)
 
 #define App(l, r) \
     {0}; \
-    expr _temp; \
     { \
-        expr __temp = (expr){ .type = EXPR_APP }; \
+        expr __lhs; \
         { \
             expr temp = l; \
-            __temp.lhs = cloneExpr(&temp); \
+            __lhs = temp; \
         } \
+        expr __rhs; \
         { \
             expr temp = r; \
-            __temp.rhs = cloneExpr(&temp); \
+            __rhs = temp; \
         } \
-        _temp = __temp; \
+        temp = mkApp(__lhs, __rhs); \
     } \
-    temp = _temp;
 
 #define Fun(b, body) \
     {0}; \
     { \
         var(b); \
         { \
-            expr __ftemp; \
+            expr __fun; \
             { \
                 expr temp = body; \
-                    __ftemp = mkFun(&temp); \
+                __fun = temp; \
             } \
-            temp = __ftemp; \
+            temp = mkFun(b, __fun); \
         } \
-        temp.arg = b; \
     }
 
 #define Defun(fname, b, body) \
     expr fname; \
     { \
         var(b); \
-        expr __ftemp; \
+        expr __fun; \
         { \
             expr temp = body; \
-            __ftemp = mkFun(&temp); \
+            __fun = temp; \
         } \
-        __ftemp.arg = b; \
-        fname = __ftemp; \
+        fname = mkFun(b, __fun); \
     } \
-    fname = evaluate(fname);
+    fname.aux = false; \
+    evaluate(&fname);
 
 #define DefunLazy(fname, b, body) \
     expr fname; \
     { \
         var(b); \
-        expr __ftemp; \
+        expr __fun; \
         { \
             expr temp = body; \
-            __ftemp = mkFun(&temp); \
+            __fun = temp; \
         } \
-        __ftemp.arg = b; \
-        fname = __ftemp; \
+        fname = mkFun(b, __fun); \
     } \
+    fname.aux = false; \
 
 #define Defvar(vname, body) \
     expr vname; \
@@ -487,8 +486,10 @@ void evaluate(expr *e) {
         expr temp = body; \
         vname = temp; \
     } \
-    vname = evaluate(vname);
+    vname.aux = false; \
+    evaluate(&vname);
 
+/*
 #define DefunImpure(fname, argty, argname, body) \
     expr __##fname(byte *__##argname, size_t len) { \
         if(!(len == sizeof(argty))) { \
@@ -509,11 +510,13 @@ void evaluate(expr *e) {
     expr vname = (expr){ .type = EXPR_IMPURE_VAL, .valp = (byte *)__##vname, .vall = sizeof(vty) }; \
 
 #define ReadVarImpure(var, ty) *(ty *)var.valp
+*/
         
 // ==================
 // USAGE
 // ==================
 
+/*
 expr __ImpureIdentity(byte *ptr, size_t len) {
     byte *ret = Malloc(len);
     memcpy(ret, ptr, len);
@@ -523,6 +526,7 @@ expr __ImpureIdentity(byte *ptr, size_t len) {
 DefunImpure(ImpureIncrement, uint64_t, num, {
     num++;
 });
+*/
 
 int main() {
 
@@ -602,6 +606,7 @@ int main() {
     Defvar(FactFive, App(Fact, Five));
 #endif
 
+/*
     // Defining impure values for confirming results
     DefvarImpure(ImpureZero, uint64_t, 0);
     DefvarImpure(ImpureOne, uint64_t, 1);
@@ -659,11 +664,7 @@ int main() {
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
 #endif
 
-    return 0;
-}
-
 */
 
-int main() {
     return 0;
 }
