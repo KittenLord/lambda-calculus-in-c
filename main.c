@@ -47,7 +47,6 @@ void Free(void *ptr) {
 #define Free(p) free(p)
 #endif
 
-
 typedef uint8_t byte;
 
 // EXPR_BIND is implied to be everything not within [0; 3]
@@ -58,12 +57,15 @@ typedef bindt exprType;
 #define EXPR_IMPURE_VAL 2
 #define EXPR_IMPURE_FUN 3
 bindt lastBind = 4;
+#define var(b) bindt b = lastBind++;
 
 typedef struct {
     byte *data;
     size_t len;
     bool aux;
 } expr;
+
+bool isBind(exprType t) { return t >= 4; }
 
 void maybeFree(expr e) {
     if(e.aux) Free(e.data);
@@ -99,7 +101,7 @@ expr mkApp(expr lhs, expr rhs) {
     data += sizeof(exprType);
 
     memcpy(data, lhs.data, lhs.len);
-    data += lsh.len;
+    data += lhs.len;
     memcpy(data, rhs.data, rhs.len);
     
     maybeFree(lhs);
@@ -123,8 +125,296 @@ typedef expr (*impureFunpt)(byte *val, size_t len);
 typedef expr impureFunt(byte *val, size_t len);
 expr mkImpureFun(impureFunpt fun) {
     size_t len = sizeof(exprType) + sizeof(impureFunpt);
+    expr b = { .aux = true, .data = Malloc(len), .len = len };
+    byte *data = b.data;
 
+    *(exprType *)data = EXPR_IMPURE_FUN;
+    data += sizeof(exprType);
+    *(impureFunpt *)data = fun;
+
+    return b;
 }
+
+typedef struct {
+    size_t *offsets;
+    size_t len;
+    size_t cap;
+} replaceList;
+
+void rladd(replaceList *list, size_t offset) {
+    if(list->len < list->cap) {
+        list->offsets[list->len++] = offset;
+        return;
+    }
+
+    size_t *noffsets = Malloc(list->cap * 2 + 1);
+    memcpy(noffsets, list->offsets, list->len);
+    list->offsets = noffsets;
+    list->cap = list->cap * 2 + 1;
+
+    rladd(list, offset);
+}
+
+replaceList rlcopy(replaceList list) {
+    size_t *offsets = Malloc(list.len);
+    memcpy(offsets, list.offsets, list.len);
+    return (replaceList){ .offsets = offsets, .len = list.len, .cap = list.cap };
+}
+
+void rlfree(replaceList list) {
+    free(list.offsets);
+}
+
+#define rlinit 128
+#define mkrl() ((replaceList){ .offsets = Malloc(rlinit), .len = 0, .cap = rlinit })
+
+size_t getExprLen(byte *data) {
+    exprType type = *(exprType *)(*data);
+
+    if(false) {}
+    else if(isBind(type)) {
+        return sizeof(bindt);
+    }
+    else if(type == EXPR_FUN) {
+        size_t fun = sizeof(exprType) + sizeof(bindt);
+        data += fun;
+        return fun + getExprLen(data);
+    }
+    else if(type == EXPR_APP) {
+        size_t app = sizeof(exprType);
+        data += app;
+        size_t lhs = getExprLen(data);
+        data += lhs;
+        size_t rhs = getExprLen(data);
+        return app + lhs + rhs;
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        size_t ival = sizeof(exprType);
+        data += ival;
+        size_t vlen = *(size_t *)data;
+        return ival + sizeof(size_t) + vlen;
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        return sizeof(exprType) + sizeof(impureFunpt);
+    }
+}
+
+void searchBinds(bindt bind, byte *odata, byte **data, replaceList *list) {
+    exprType type = *(exprType *)*data;
+    
+    if(false) {}
+    else if(isBind(type)) {
+        bindt mbind = *(bindt *)*data;
+
+        if(mbind == bind) {
+            rladd(list, *data - odata);
+        }
+
+        *data += sizeof(bindt);
+        return;
+    }
+    else if(type == EXPR_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(bindt);
+        searchBinds(bind, odata, data, list);
+        return;
+    }
+    else if(type == EXPR_APP) {
+        *data += sizeof(exprType);
+        searchBinds(bind, odata, data, list);
+        searchBinds(bind, odata, data, list);
+        return;
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        *data += sizeof(exprType);
+        size_t vlen = *(size_t *)data;
+        *data += sizeof(size_t);
+        *data += vlen;
+        return;
+    }
+    else if(type == EXPR_IMPURE_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(impureFunpt);
+        return;
+    }
+}
+
+bool scanForSubst(byte *odata, byte **data, replaceList *list, byte **rdata, size_t *rlen) {
+    exprType type = *(exprType *)*data;
+
+    if(false) {}
+    else if(isBind(type)) {
+        *data += sizeof(exprType);
+        return false;
+    }
+    else if(type == EXPR_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(bindt);
+        return scanForSubst(odata, data, list, rdata, rlen);
+    }
+    else if(type == EXPR_APP) {
+        *data += sizeof(exprType);
+        exprType lhsType = *(exprType *)*data;
+        if(lhsType == EXPR_FUN) {
+            size_t funLen = getExprLen(*data);
+            size_t argLen = getExprLen(*data + funLen);
+
+            bindt bind = *(bindt *)*data;
+            *data += sizeof(bindt);
+
+            byte *sdata = *data;
+            searchBinds(bind, odata, &sdata, list);
+
+            *rdata = *data + funLen;
+            *rlen = argLen;
+
+            return true;
+        }
+        else {
+            bool lhs = scanForSubst(odata, data, list, rdata, rlen);
+            if(lhs) return lhs;
+            return scanForSubst(odata, data, list, rdata, rlen);
+        }
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        *data += sizeof(exprType);
+        size_t vlen = *(size_t *)*data;
+        *data += sizeof(size_t);
+        *data += vlen;
+        return false;
+    }
+    else if(type == EXPR_IMPURE_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(impureFunpt);
+        return false;
+    }
+}
+
+void replaceBindings(bindt oldBind, bindt newBind, byte **data) {
+    exprType type = *(exprType *)*data;
+
+    if(false) {}
+    else if(isBind(type)) {
+        bindt mbind = *(bindt *)*data;
+
+        if(mbind == oldBind) {
+            *(bindt *)*data = newBind;
+        }
+
+        *data += sizeof(bindt);
+        return;
+    }
+    else if(type == EXPR_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(bindt);
+        replaceBindings(oldBind, newBind, data);
+        return;
+    }
+    else if(type == EXPR_APP) {
+        *data += sizeof(exprType);
+        replaceBindings(oldBind, newBind, data);
+        replaceBindings(oldBind, newBind, data);
+        return;
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        *data += sizeof(exprType);
+        size_t vlen = *(size_t *)*data;
+        *data += sizeof(size_t);
+        *data += vlen;
+        return;
+    }
+    else if(type == EXPR_IMPURE_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(impureFunpt);
+        return;
+    }
+}
+
+void makeUniqueBindings(byte **data) {
+    exprType type = *(exprType *)*data;
+
+    if(false) {}
+    else if(isBind(type)) {
+        *data += sizeof(bindt);
+        return;
+    }
+    else if(type == EXPR_FUN) {
+        *data += sizeof(exprType);
+        bindt bind = *(bindt *)*data;
+        var(newBind);
+
+        byte *sdata = *data;
+        replaceBindings(bind, newBind, &sdata);
+
+        *data += sizeof(bindt);
+        makeUniqueBindings(data);
+        return;
+    }
+    else if(type == EXPR_APP) {
+        *data += sizeof(exprType);
+        makeUniqueBindings(data);
+        makeUniqueBindings(data);
+        return;
+    }
+    else if(type == EXPR_IMPURE_VAL) {
+        *data += sizeof(exprType);
+        size_t vlen = *(size_t *)*data;
+        *data += sizeof(size_t);
+        *data += vlen;
+        return;
+    }
+    else if(type == EXPR_IMPURE_FUN) {
+        *data += sizeof(exprType);
+        *data += sizeof(impureFunpt);
+        return;
+    }
+}
+
+void evaluate(expr *e) {
+    replaceList list = mkrl();
+
+    byte *odata = e->data;
+    byte *data = e->data;
+
+    byte *rdata;
+    size_t rlen;
+
+    while(scanForSubst(odata, &data, &list, &rdata, &rlen)) {
+        size_t extraBytesPerBind = (rlen - sizeof(bindt));
+        size_t oldLen = e->len;
+        size_t newLen = e->len + extraBytesPerBind * list.len;
+
+        // copying before realloc
+        byte *_rdata = Malloc(rlen);
+        memcpy(_rdata, rdata, rlen);
+        rdata = _rdata;
+
+        e->data = realloc(e->data, newLen);
+        odata = e->data;
+
+        size_t extra = 0;
+        for(int i = 0; i < list.len; i++) {
+            size_t offset = list.offsets[i];
+            size_t toMove = oldLen - offset;
+            offset += extra;
+            extra += extraBytesPerBind;
+
+            memmove(odata + offset + sizeof(bindt), odata + offset + sizeof(bindt) + extraBytesPerBind, toMove);
+
+            _rdata = rdata;
+            makeUniqueBindings(&_rdata);
+            memcpy(odata + offset, rdata, rlen);
+        }
+
+        free(rdata);
+        list.len = 0;
+        data = odata;
+    }
+
+    rlfree(list);
+}
+
+/*
 
 // ==================
 // MACROS
@@ -369,5 +659,11 @@ int main() {
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
 #endif
 
+    return 0;
+}
+
+*/
+
+int main() {
     return 0;
 }
