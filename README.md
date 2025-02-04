@@ -17,3 +17,4 @@ Defvar(Two, App(Succ, One));
 
 - [ ] Fix memory leaks (real)
 - [ ] Make some sort of a header
+- [ ] Memory corruption when trying to CheckNumber a sufficiently large number (around 130)

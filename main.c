@@ -411,7 +411,7 @@ void evaluate(expr *e) {
         size_t extra = 0;
         for(size_t i = 0; i < list.len; i++) {
             size_t offset = list.offsets[i] - flen + extra;
-            size_t toMove = oldLen - offset + extra - flen - rlen - sizeof(bindt);
+            size_t toMove = oldLen + extra - offset - flen - rlen - sizeof(bindt);
             extra += extraBytesPerBind;
 
             memmove(odata + offset + sizeof(bindt) + extraBytesPerBind, odata + offset + sizeof(bindt), toMove);
