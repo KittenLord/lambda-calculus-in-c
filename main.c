@@ -105,7 +105,8 @@ typedef struct {
 
 void rladd(replaceList *list, size_t offset) {
     if(list->len < list->cap) {
-        list->offsets[list->len++] = offset;
+        list->offsets[list->len] = offset;
+        (list->len)++;
         return;
     }
 
@@ -118,18 +119,18 @@ void rladd(replaceList *list, size_t offset) {
     rladd(list, offset);
 }
 
-replaceList rlcopy(replaceList list) {
-    size_t *offsets = Malloc(list.len);
-    memcpy(offsets, list.offsets, list.len);
-    return (replaceList){ .offsets = offsets, .len = list.len, .cap = list.cap };
-}
+// replaceList rlcopy(replaceList list) {
+//     size_t *offsets = Malloc(list.len);
+//     memcpy(offsets, list.offsets, list.len);
+//     return (replaceList){ .offsets = offsets, .len = list.len, .cap = list.cap };
+// }
 
 void rlfree(replaceList list) {
     Free(list.offsets);
 }
 
-#define rlinit (sizeof(size_t) * 128)
-#define mkrl() ((replaceList){ .offsets = Malloc(rlinit), .len = 0, .cap = rlinit })
+#define rlinit (128)
+#define mkrl() ((replaceList){ .offsets = Malloc(rlinit * sizeof(size_t)), .len = 0, .cap = rlinit })
 
 // ==================
 // EVALUATION
@@ -398,6 +399,11 @@ void evaluate(expr *e) {
             imrlen = impureResult.len;
         }
 
+        if(!useImpureFunction) {
+            byte *_rdata = rdata;
+            makeUniqueBindings(&_rdata);
+        }
+
         size_t extraBytesPerBind = (imrlen - sizeof(bindt));
         size_t oldLen = e->len;
         size_t newLen = e->len + extraBytesPerBind * list.len - rlen - flen;
@@ -415,11 +421,6 @@ void evaluate(expr *e) {
             extra += extraBytesPerBind;
 
             memmove(odata + offset + sizeof(bindt) + extraBytesPerBind, odata + offset + sizeof(bindt), toMove);
-
-            if(!useImpureFunction) {
-                byte *_rdata = rdata;
-                makeUniqueBindings(&_rdata);
-            }
 
             memcpy(odata + offset, rdata, imrlen);
         }
@@ -517,36 +518,38 @@ expr mkImpureFun(impureFunpt fun) {
 // PRINTING
 // ==================
 
-char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[]) {
+char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[], int bindsAmount) {
     for(size_t i = 0; i < *lastBind; i++) {
         if(binds[i] == bind) return symbols[i];
     }
+
+    if(*lastBind >= bindsAmount) return '?';
 
     binds[*lastBind] = bind;
     return symbols[(*lastBind)++];
 }
 
-void _printExpr(byte **data, bindt binds[], size_t *lastBind, char symbols[], bool isRhs) {
+void _printExpr(byte **data, bindt binds[], size_t *lastBind, char symbols[], bool isRhs, int bindsAmount) {
     exprType type = *(exprType *)*data;
 
     if(false) {}
     else if(isBind(type)) {
         *data += sizeof(bindt);
-        printf("%c", getBindSymbol((bindt)type, binds, lastBind, symbols));
+        printf("%c", getBindSymbol((bindt)type, binds, lastBind, symbols, bindsAmount));
     }
     else if(type == EXPR_FUN) {
         *data += sizeof(exprType);
         bindt bind = *(bindt *)*data;
-        printf("( λ%c.", getBindSymbol(bind, binds, lastBind, symbols));
+        printf("( λ%c.", getBindSymbol(bind, binds, lastBind, symbols, bindsAmount));
         *data += sizeof(bindt);
-        _printExpr(data, binds, lastBind, symbols, false);
+        _printExpr(data, binds, lastBind, symbols, false, bindsAmount);
         printf(" )");
     }
     else if(type == EXPR_APP) {
         if(isRhs) printf("(");
         *data += sizeof(exprType);
-        _printExpr(data, binds, lastBind, symbols, false);
-        _printExpr(data, binds, lastBind, symbols, true);
+        _printExpr(data, binds, lastBind, symbols, false, bindsAmount);
+        _printExpr(data, binds, lastBind, symbols, true, bindsAmount);
         if(isRhs) printf(")");
     }
     else if(type == EXPR_IMPURE_VAL) {
@@ -568,7 +571,7 @@ void printExpr(expr e) {
     size_t lastBind = 0;
     char symbols[52] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     byte *data = e.data;
-    _printExpr(&data, binds, &lastBind, symbols, false);
+    _printExpr(&data, binds, &lastBind, symbols, false, 52);
     printf("\n");
 }
 
@@ -820,6 +823,10 @@ int main() {
 
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
+
+    Defvar(SumNatFactFive, App(CheckNumber, App(SumNat, FactFive)));
+    Defvar(CheckSumNatFactFive, SumNatFactFive);
+    printf("Sum of all numbers up to 5! evaluates to: %lu\n", ReadVarImpure(CheckSumNatFactFive, uint64_t));
 
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
