@@ -90,7 +90,7 @@ void maybeFree(expr e) {
     if(e.aux) Free(e.data);
 }
 
-bool isBind(exprType t) { return t >= 4; }
+#define isBind(t) ((t) >= 4)
 
 char *boolToStr(bool b) {
     if(b) return "true";
@@ -823,6 +823,9 @@ int main() {
 
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
+
+    // Defvar(CheckSumNatFactFive, App(CheckNumber, App(SumNat, FactFive)));
+    // printf("5! sum evaluates to: %lu\n", ReadVarImpure(CheckSumNatFactFive, uint64_t));
 
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
