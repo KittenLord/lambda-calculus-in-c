@@ -824,10 +824,6 @@ int main() {
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
 
-    Defvar(SumNatFactFive, App(CheckNumber, App(SumNat, FactFive)));
-    Defvar(CheckSumNatFactFive, SumNatFactFive);
-    printf("Sum of all numbers up to 5! evaluates to: %lu\n", ReadVarImpure(CheckSumNatFactFive, uint64_t));
-
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
 #endif
