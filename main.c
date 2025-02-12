@@ -32,7 +32,8 @@ void *Malloc(size_t size) {
     finalCount++;
     if(finalCount > peakCount) peakCount = finalCount;
 
-    return calloc(1, size);
+    // return calloc(1, size);
+    return malloc(size);
 }
 
 void *Realloc(void *ptr, size_t size) {
@@ -48,7 +49,7 @@ void Free(void *ptr) {
     free(ptr);
 }
 #else
-#define Malloc(s) calloc(1, s)
+#define Malloc(s) malloc(s)
 #define Free(p) free(p)
 #define Realloc(p, s) realloc(p, s)
 #endif
@@ -596,7 +597,7 @@ expr mkImpureFun(impureFunpt fun) {
 // PRINTING
 // ==================
 
-char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[], int bindsAmount) {
+char getBindSymbol(bindt bind, bindt binds[], size_t *lastBind, char symbols[], size_t bindsAmount) {
     for(size_t i = 0; i < *lastBind; i++) {
         if(binds[i] == bind) return symbols[i];
     }
@@ -682,7 +683,7 @@ expr Church(size_t num) {
     *(bindt *)sdata = z;
     sdata += sizeof(bindt);
 
-    for(int i = 0; i < num; i++) {
+    for(size_t i = 0; i < num; i++) {
         *(exprType *)sdata = EXPR_APP;
         sdata += sizeof(exprType);
 
@@ -881,6 +882,7 @@ int main() {
     // Recursive Y and Z combinators
     DefunLazy(YC, y, App(Fun(x, App(Bind(y), App(Bind(x), Bind(x)))), Fun(x, App(Bind(y), App(Bind(x), Bind(x))))));
     DefunLazy(ZC, f, App(Fun(x, App(Bind(f), Fun(v, App(App(Bind(x), Bind(x)), Bind(v))))), Fun(x, App(Bind(f), Fun(v, App(App(Bind(x), Bind(x)), Bind(v)))))));
+    ZC = ZC;
 
     // Sum via Y combinator
     Defun(SumNatAux, r, Fun(n, App(App(App(IsZero, Bind(n)), Zero), App(App(Bind(n), Succ), App(Bind(r), App(Pred, Bind(n)))))));
