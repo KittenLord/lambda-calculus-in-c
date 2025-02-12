@@ -13,11 +13,6 @@
 // Z combinator definition:
 // https://en.wikipedia.org/wiki/Fixed-point_combinator
 
-// NOTE: I'm currently too sleepy to figure this out, but there's a huge
-// memory leak happening in tests (probably due to how EXPR_IMPURE_VAL
-// are being cloned). If you comment out the tests, memory usage is 
-// basically perfect
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -796,7 +791,9 @@ expr Church(size_t num) {
  \
         argty *__result = Malloc(sizeof(argty)); \
         *__result = argname; \
-        return mkImpureVal((byte *)__result, sizeof(argty)); \
+        expr __expr = mkImpureVal((byte *)__result, sizeof(argty)); \
+        Free(__result); \
+        return __expr; \
     } \
     const uint64_t __test[] = { EXPR_IMPURE_FUN, (uint64_t)__##fname }; \
     expr fname = (expr){ .aux = false, .len = sizeof(exprType) + sizeof(impureFunpt), .data = (byte *)__test };
