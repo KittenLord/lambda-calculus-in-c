@@ -137,237 +137,320 @@ void rlfree(replaceList list) {
 // ==================
 
 size_t getExprLen(byte *data) {
-    exprType type = *(exprType *)data;
+    size_t acc = 0;
+    ssize_t depth = 1;
 
-    if(false) {}
-    else if(isBind(type)) {
-        return sizeof(bindt);
+    while(depth > 0) {
+        exprType type = *(exprType *)data;
+
+        if(false) {}
+        else if(isBind(type)) {
+            acc += sizeof(bindt);
+            data += sizeof(bindt);
+
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_FUN) {
+            size_t fun = sizeof(exprType) + sizeof(bindt);
+            data += fun;
+            acc += fun;
+
+            depth += 1;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_APP) {
+            size_t app = sizeof(exprType);
+            data += app;
+            acc += app;
+
+            depth += 2;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_VAL) {
+            size_t ival = sizeof(exprType);
+            data += ival;
+            size_t vlen = *(size_t *)data;
+            data += sizeof(size_t) + vlen;
+            acc += ival + sizeof(size_t) + vlen;
+
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_FUN) {
+            data += sizeof(exprType) + sizeof(impureFunpt);
+            acc += sizeof(exprType) + sizeof(impureFunpt);
+
+            depth--;
+            continue;
+        }
+        else {
+            printf("This should never happen (all types should be covered by the ifs)\n");
+            exit(1);
+        }
     }
-    else if(type == EXPR_FUN) {
-        size_t fun = sizeof(exprType) + sizeof(bindt);
-        data += fun;
-        return fun + getExprLen(data);
-    }
-    else if(type == EXPR_APP) {
-        size_t app = sizeof(exprType);
-        data += app;
-        size_t lhs = getExprLen(data);
-        data += lhs;
-        size_t rhs = getExprLen(data);
-        return app + lhs + rhs;
-    }
-    else if(type == EXPR_IMPURE_VAL) {
-        size_t ival = sizeof(exprType);
-        data += ival;
-        size_t vlen = *(size_t *)data;
-        return ival + sizeof(size_t) + vlen;
-    }
-    else if(type == EXPR_IMPURE_FUN) {
-        return sizeof(exprType) + sizeof(impureFunpt);
-    }
-    else {
-        printf("This should never happen (all types should be covered by the ifs)\n");
-        exit(1);
-    }
+
+    return acc;
 }
 
 void searchBinds(bindt bind, byte *odata, byte **data, replaceList *list) {
-    exprType type = *(exprType *)*data;
-    
-    if(false) {}
-    else if(isBind(type)) {
-        bindt mbind = *(bindt *)*data;
+    ssize_t depth = 1;
 
-        if(mbind == bind) {
-            rladd(list, *data - odata);
+    while(depth > 0) {
+        exprType type = *(exprType *)*data;
+
+        if(false) {}
+        else if(isBind(type)) {
+            bindt mbind = *(bindt *)*data;
+
+            if(mbind == bind) {
+                rladd(list, *data - odata);
+            }
+
+            *data += sizeof(bindt);
+
+            depth--;
+            continue;
         }
+        else if(type == EXPR_FUN) {
+            *data += sizeof(exprType);
+            *data += sizeof(bindt);
 
-        *data += sizeof(bindt);
-        return;
-    }
-    else if(type == EXPR_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(bindt);
-        searchBinds(bind, odata, data, list);
-        return;
-    }
-    else if(type == EXPR_APP) {
-        *data += sizeof(exprType);
-        searchBinds(bind, odata, data, list);
-        searchBinds(bind, odata, data, list);
-        return;
-    }
-    else if(type == EXPR_IMPURE_VAL) {
-        *data += sizeof(exprType);
-        size_t vlen = *(size_t *)*data;
-        *data += sizeof(size_t);
-        *data += vlen;
-        return;
-    }
-    else if(type == EXPR_IMPURE_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(impureFunpt);
-        return;
+            depth += 1;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_APP) {
+            *data += sizeof(exprType);
+
+            depth += 2;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_VAL) {
+            *data += sizeof(exprType);
+            size_t vlen = *(size_t *)*data;
+            *data += sizeof(size_t);
+            *data += vlen;
+
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_FUN) {
+            *data += sizeof(exprType);
+            *data += sizeof(impureFunpt);
+
+            depth--;
+            continue;
+        }
     }
 }
 
 bool scanForSubst(byte *odata, byte **data, replaceList *list, size_t *rpos, size_t *rlen, size_t *fpos, size_t *flen, impureFunpt *imfun) {
-    exprType type = *(exprType *)*data;
+    ssize_t depth = 1;
+    bool result = false;
 
-    if(false) {}
-    else if(isBind(type)) {
-        *data += sizeof(exprType);
-        return false;
-    }
-    else if(type == EXPR_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(bindt);
-        return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
-    }
-    else if(type == EXPR_APP) {
-        *fpos = *data - odata;
-        *data += sizeof(exprType);
-        exprType lhsType = *(exprType *)*data;
-        if(lhsType == EXPR_FUN) {
+    while(depth > 0) {
+        if(result) return result;
 
-            size_t funLen = getExprLen(*data);
-            size_t argLen = getExprLen(*data + funLen);
+        exprType type = *(exprType *)*data;
+
+        if(false) {}
+        else if(isBind(type)) {
             *data += sizeof(exprType);
 
-            *flen = sizeof(exprType) + sizeof(exprType) + sizeof(bindt);
-
-            bindt bind = *(bindt *)*data;
+            result = false;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_FUN) {
+            *data += sizeof(exprType);
             *data += sizeof(bindt);
 
-            byte *sdata = *data;
-            searchBinds(bind, odata, &sdata, list);
-
-            *rpos = *fpos + sizeof(exprType) + funLen;
-            *rlen = argLen;
-
-            return true;
+            depth += 1;
+            depth--;
+            continue;
         }
-        else if(lhsType == EXPR_IMPURE_FUN) {
+        else if(type == EXPR_APP) {
+            *fpos = *data - odata;
             *data += sizeof(exprType);
-            *imfun = *(impureFunpt *)*data;
-            rladd(list, *data - odata); // NOTE: assumes sizeof(bindt) == sizeof(pointer)
-            *data += sizeof(impureFunpt);
-            *flen = sizeof(exprType) + sizeof(exprType); // + sizeof(impureFunpt);
+            exprType lhsType = *(exprType *)*data;
+            if(lhsType == EXPR_FUN) {
 
-            *rpos = *data - odata;
-            *rlen = getExprLen(*data);
+                size_t funLen = getExprLen(*data);
+                size_t argLen = getExprLen(*data + funLen);
+                *data += sizeof(exprType);
 
-            exprType argType = *(exprType *)*data;
-            if(argType != EXPR_IMPURE_VAL) {
-                *imfun = NULL;
-                list->len = 0;
-                return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
+                *flen = sizeof(exprType) + sizeof(exprType) + sizeof(bindt);
+
+                bindt bind = *(bindt *)*data;
+                *data += sizeof(bindt);
+
+                byte *sdata = *data;
+                searchBinds(bind, odata, &sdata, list);
+
+                *rpos = *fpos + sizeof(exprType) + funLen;
+                *rlen = argLen;
+
+                result = true;
+                continue;
             }
+            else if(lhsType == EXPR_IMPURE_FUN) {
+                *data += sizeof(exprType);
+                *imfun = *(impureFunpt *)*data;
+                rladd(list, *data - odata); // NOTE: assumes sizeof(bindt) == sizeof(pointer)
+                *data += sizeof(impureFunpt);
+                *flen = sizeof(exprType) + sizeof(exprType); // + sizeof(impureFunpt);
 
-            return true;
+                *rpos = *data - odata;
+                *rlen = getExprLen(*data);
+
+                exprType argType = *(exprType *)*data;
+                if(argType != EXPR_IMPURE_VAL) {
+                    *imfun = NULL;
+                    list->len = 0;
+
+                    depth += 1;
+                    depth--;
+                    continue;
+                }
+
+                result = true;
+                continue;
+            }
+            else {
+                depth += 2;
+                depth--;
+                continue;
+            }
         }
-        else {
-            bool lhs = scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
-            if(lhs) return lhs;
-            return scanForSubst(odata, data, list, rpos, rlen, fpos, flen, imfun);
+        else if(type == EXPR_IMPURE_VAL) {
+            *data += sizeof(exprType);
+            size_t vlen = *(size_t *)*data;
+            *data += sizeof(size_t);
+            *data += vlen;
+
+            result = false;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_FUN) {
+            *data += sizeof(exprType);
+            *data += sizeof(impureFunpt);
+
+            result = false;
+            depth--;
+            continue;
         }
     }
-    else if(type == EXPR_IMPURE_VAL) {
-        *data += sizeof(exprType);
-        size_t vlen = *(size_t *)*data;
-        *data += sizeof(size_t);
-        *data += vlen;
-        return false;
-    }
-    else if(type == EXPR_IMPURE_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(impureFunpt);
-        return false;
-    }
-    else {
-        printf("This should never happen (all types should be covered by the ifs)\n");
-        exit(1);
-    }
+
+    return result;
 }
 
 void replaceBindings(bindt oldBind, bindt newBind, byte **data) {
-    exprType type = *(exprType *)*data;
+    ssize_t depth = 1;
+    while(depth > 0) {
+        exprType type = *(exprType *)*data;
 
-    if(false) {}
-    else if(isBind(type)) {
-        bindt mbind = *(bindt *)*data;
+        if(false) {}
+        else if(isBind(type)) {
+            bindt mbind = *(bindt *)*data;
 
-        if(mbind == oldBind) {
-            *(bindt *)*data = newBind;
+            if(mbind == oldBind) {
+                *(bindt *)*data = newBind;
+            }
+
+            *data += sizeof(bindt);
+
+            depth--;
+            continue;
         }
+        else if(type == EXPR_FUN) {
+            *data += sizeof(exprType);
+            *data += sizeof(bindt);
 
-        *data += sizeof(bindt);
-        return;
-    }
-    else if(type == EXPR_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(bindt);
-        replaceBindings(oldBind, newBind, data);
-        return;
-    }
-    else if(type == EXPR_APP) {
-        *data += sizeof(exprType);
-        replaceBindings(oldBind, newBind, data);
-        replaceBindings(oldBind, newBind, data);
-        return;
-    }
-    else if(type == EXPR_IMPURE_VAL) {
-        *data += sizeof(exprType);
-        size_t vlen = *(size_t *)*data;
-        *data += sizeof(size_t);
-        *data += vlen;
-        return;
-    }
-    else if(type == EXPR_IMPURE_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(impureFunpt);
-        return;
+            depth += 1;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_APP) {
+            *data += sizeof(exprType);
+            
+            depth += 2;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_VAL) {
+            *data += sizeof(exprType);
+            size_t vlen = *(size_t *)*data;
+            *data += sizeof(size_t);
+            *data += vlen;
+
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_FUN) {
+            *data += sizeof(exprType);
+            *data += sizeof(impureFunpt);
+
+            depth--;
+            continue;
+        }
     }
 }
 
-void makeUniqueBindings(byte **data) {
-    exprType type = *(exprType *)*data;
+void makeUniqueBindings(byte *data) {
+    ssize_t depth = 1;
 
-    if(false) {}
-    else if(isBind(type)) {
-        *data += sizeof(bindt);
-        return;
-    }
-    else if(type == EXPR_FUN) {
-        *data += sizeof(exprType);
-        bindt bind = *(bindt *)*data;
-        var(newBind);
-        *(bindt *)*data = newBind;
-        *data += sizeof(bindt);
+    while(depth > 0) {
+        exprType type = *(exprType *)data;
 
-        byte *sdata = *data;
-        replaceBindings(bind, newBind, &sdata);
+        if(false) {}
+        else if(isBind(type)) {
+            data += sizeof(bindt);
 
-        makeUniqueBindings(data);
-        return;
-    }
-    else if(type == EXPR_APP) {
-        *data += sizeof(exprType);
-        makeUniqueBindings(data);
-        makeUniqueBindings(data);
-        return;
-    }
-    else if(type == EXPR_IMPURE_VAL) {
-        *data += sizeof(exprType);
-        size_t vlen = *(size_t *)*data;
-        *data += sizeof(size_t);
-        *data += vlen;
-        return;
-    }
-    else if(type == EXPR_IMPURE_FUN) {
-        *data += sizeof(exprType);
-        *data += sizeof(impureFunpt);
-        return;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_FUN) {
+            data += sizeof(exprType);
+            bindt bind = *(bindt *)data;
+            var(newBind);
+            *(bindt *)data = newBind;
+            data += sizeof(bindt);
+
+            byte *sdata = data;
+            replaceBindings(bind, newBind, &sdata);
+
+            depth += 1;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_APP) {
+            data += sizeof(exprType);
+
+            depth += 2;
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_VAL) {
+            data += sizeof(exprType);
+            size_t vlen = *(size_t *)data;
+            data += sizeof(size_t);
+            data += vlen;
+
+            depth--;
+            continue;
+        }
+        else if(type == EXPR_IMPURE_FUN) {
+            data += sizeof(exprType);
+            data += sizeof(impureFunpt);
+
+            depth--;
+            continue;
+        }
     }
 }
 
@@ -401,7 +484,7 @@ void evaluate(expr *e) {
 
         if(!useImpureFunction) {
             byte *_rdata = rdata;
-            makeUniqueBindings(&_rdata);
+            makeUniqueBindings(_rdata);
         }
 
         size_t extraBytesPerBind = (imrlen - sizeof(bindt));
@@ -459,7 +542,7 @@ expr mkFun(bindt bind, expr body) {
 
     memcpy(data, body.data, body.len);
     byte *p = data;
-    makeUniqueBindings(&p);
+    makeUniqueBindings(p);
 
     maybeFree(body);
     return b;
@@ -475,12 +558,12 @@ expr mkApp(expr lhs, expr rhs) {
 
     memcpy(data, lhs.data, lhs.len);
     byte *p = data;
-    makeUniqueBindings(&p);
+    makeUniqueBindings(p);
     data += lhs.len;
 
     memcpy(data, rhs.data, rhs.len);
     p = data;
-    makeUniqueBindings(&p);
+    makeUniqueBindings(p);
     
     maybeFree(lhs);
     maybeFree(rhs);
@@ -824,8 +907,10 @@ int main() {
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
 
-    // Defvar(CheckSumNatFactFive, App(CheckNumber, App(SumNat, FactFive)));
-    // printf("5! sum evaluates to: %lu\n", ReadVarImpure(CheckSumNatFactFive, uint64_t));
+    // Defvar(Large, App(App(Mul, Three), Twenty))
+    // Defvar(SumNatLarge, App(SumNat, Large));
+    // Defvar(CheckSumNatLarge, App(CheckNumber, SumNatLarge));
+    // printf("Large sumnat evaluates to: %lu\n", ReadVarImpure(CheckSumNatLarge, uint64_t));
 
 #ifdef MEM_STATS
     printf("MALLOC: %ld; FREE: %ld; FINAL: %ld; PEAK: %ld\n", mallocCount, freeCount, finalCount, peakCount);
