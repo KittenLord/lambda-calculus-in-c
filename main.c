@@ -659,10 +659,47 @@ void printExpr(expr e) {
 }
 
 // ==================
-// MACROS
+// MACROS / EXPRESSIONS
 // ==================
 
 #define Bind(bi) mkBind(bi)
+
+expr Church(size_t num) {
+    var(s);
+    var(z);
+    size_t allocSize = sizeof(exprType) + sizeof(bindt) +
+                       sizeof(exprType) + sizeof(bindt) +
+                       num * (sizeof(exprType) + sizeof(bindt)) +
+                       sizeof(bindt);
+
+    byte *data = Malloc(allocSize);
+    byte *sdata = data;
+
+    *(exprType *)sdata = EXPR_FUN;
+    sdata += sizeof(exprType);
+
+    *(bindt *)sdata = s;
+    sdata += sizeof(bindt);
+
+    *(exprType *)sdata = EXPR_FUN;
+    sdata += sizeof(exprType);
+
+    *(bindt *)sdata = z;
+    sdata += sizeof(bindt);
+
+    for(int i = 0; i < num; i++) {
+        *(exprType *)sdata = EXPR_APP;
+        sdata += sizeof(exprType);
+
+        *(bindt *)sdata = s;
+        sdata += sizeof(bindt);
+    }
+
+    *(bindt *)sdata = z;
+    sdata += sizeof(bindt);
+
+    return (expr){ .data = data, .len = allocSize, .aux = true };
+}
 
 #define App(l, r) \
     {0}; \
@@ -907,7 +944,7 @@ int main() {
     Defvar(CheckFactFive, App(CheckNumber, FactFive));
     printf("Five factorial evaluates to: %lu\n", ReadVarImpure(CheckFactFive, uint64_t));
 
-    // Defvar(Large, App(App(Mul, Three), Twenty))
+    // Defvar(Large, Church(60));
     // Defvar(SumNatLarge, App(SumNat, Large));
     // Defvar(CheckSumNatLarge, App(CheckNumber, SumNatLarge));
     // printf("Large sumnat evaluates to: %lu\n", ReadVarImpure(CheckSumNatLarge, uint64_t));
