@@ -18,3 +18,6 @@ Defvar(Two, App(Succ, One));
 - [ ] Fix memory leaks (real)
 - [ ] Make some sort of a header
 - [x] Memory corruption when trying to CheckNumber a sufficiently large number (around 130)
+- [ ] Make `scanForSubst` and `evaluate` process more than one substitution at a time (this will probably make it five gazillion times faster)
+- [ ] Try removing all `memmove`s
+- [ ] Try preallocating memory in `evaluate`
